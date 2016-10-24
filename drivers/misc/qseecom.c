@@ -4378,7 +4378,6 @@ static void __qseecom_deinit_clk(enum qseecom_ce_hw_instance ce)
 static int __devinit qseecom_probe(struct platform_device *pdev)
 {
 	int rc;
-	int ret = 0;
 	struct device *class_dev;
 	char qsee_not_legacy = 0;
 	struct msm_bus_scale_pdata *qseecom_platform_support = NULL;
@@ -4419,7 +4418,7 @@ static int __devinit qseecom_probe(struct platform_device *pdev)
 
 	class_dev = device_create(driver_class, NULL, qseecom_device_no, NULL,
 			QSEECOM_DEV);
-	if (!class_dev) {
+	if (IS_ERR(class_dev)) {
 		pr_err("class_device_create failed %d\n", rc);
 		rc = -ENOMEM;
 		goto exit_destroy_class;
@@ -4470,7 +4469,7 @@ static int __devinit qseecom_probe(struct platform_device *pdev)
 	qseecom.pdev = class_dev;
 	/* Create ION msm client */
 	qseecom.ion_clnt = msm_ion_client_create(-1, "qseecom-kernel");
-	if (qseecom.ion_clnt == NULL) {
+	if (IS_ERR_OR_NULL(qseecom.ion_clnt)) {
 		pr_err("Ion client cannot be created\n");
 		rc = -ENOMEM;
 		goto exit_del_cdev;
@@ -4556,14 +4555,14 @@ static int __devinit qseecom_probe(struct platform_device *pdev)
 		qseecom.qsee.instance = qseecom.ce_info.qsee_ce_hw_instance;
 		qseecom.ce_drv.instance = qseecom.ce_info.hlos_ce_hw_instance;
 
-		ret = __qseecom_init_clk(CLK_QSEE);
-		if (ret)
+		rc = __qseecom_init_clk(CLK_QSEE);
+		if (rc)
 			goto exit_destroy_ion_client;
 
 		if ((qseecom.qsee.instance != qseecom.ce_drv.instance) &&
 				(qseecom.support_pfe || qseecom.support_fde)) {
-			ret = __qseecom_init_clk(CLK_CE_DRV);
-			if (ret) {
+			rc = __qseecom_init_clk(CLK_CE_DRV);
+			if (rc) {
 				__qseecom_deinit_clk(CLK_QSEE);
 				goto exit_destroy_ion_client;
 			}
@@ -4596,7 +4595,7 @@ static int __devinit qseecom_probe(struct platform_device *pdev)
 			} else {
 				pr_err("Fail to get secure app region info\n");
 				rc = -EINVAL;
-				goto exit_destroy_ion_client;
+				goto exit_deinit_clock;
 			}
 			rc = scm_call(SCM_SVC_TZSCHEDULER, 1, &req, sizeof(req),
 							&resp, sizeof(resp));
@@ -4604,7 +4603,7 @@ static int __devinit qseecom_probe(struct platform_device *pdev)
 				pr_err("send secapp reg fail %d resp.res %d\n",
 							rc, resp.result);
 				rc = -EINVAL;
-				goto exit_destroy_ion_client;
+				goto exit_deinit_clock;
 			}
 		}
 	} else {
@@ -4626,6 +4625,11 @@ static int __devinit qseecom_probe(struct platform_device *pdev)
 		pr_err("Unable to register bus client\n");
 	return 0;
 
+exit_deinit_clock:
+	__qseecom_deinit_clk(CLK_QSEE);
+	if ((qseecom.qsee.instance != qseecom.ce_drv.instance) &&
+		(qseecom.support_pfe || qseecom.support_fde))
+		__qseecom_deinit_clk(CLK_CE_DRV);
 exit_destroy_ion_client:
 	ion_client_destroy(qseecom.ion_clnt);
 exit_del_cdev:
